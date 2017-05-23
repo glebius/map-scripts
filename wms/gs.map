@@ -1,0 +1,38 @@
+MAP
+  NAME "sovmil"
+#  CONFIG "CPL_DEBUG" "ON"
+  STATUS ON
+  UNITS DD
+  SHAPEPATH "/home/glebius/wms"
+
+  PROJECTION
+    "init=epsg:4326"
+  END
+
+WEB
+    IMAGEPATH "/home/glebius/wms/"
+    IMAGEURL "/wms/"
+    METADATA
+	"wms_title"     "glebius's maps"
+	"wms_srs"       "EPSG:4326"
+	"wms_enable_request" "*"
+    END
+END
+
+LAYER
+    NAME "gs"
+    TYPE RASTER
+    STATUS ON
+    OPACITY ALPHA
+    TILEINDEX "vrt-index.shp"
+    TILEITEM "Location"
+    PROJECTION
+        "init=epsg:4326"
+    END
+    METADATA
+	"wms_title" "Soviet Military Mosaic"
+	"wms_srs" "EPSG:4326"
+    END
+END
+
+END
