@@ -1,0 +1,386 @@
+package WebMaps;
+
+use strict;
+
+our (@ISA, @EXPORT_OK, %EXPORT_TAGS);
+BEGIN {
+	require Exporter;
+	@ISA = qw/Exporter/;
+	@EXPORT_OK = qw/ProjInit MapsInit BBoxFetch BBoxCopy TileNum TileSize LatLon2Tile/;
+	%EXPORT_TAGS = (standard => [@EXPORT_OK]);
+}
+
+use LWP;
+use POSIX qw/pow tan asin/;
+use File::Path qw/make_path/;
+use Fcntl qw/:DEFAULT/;
+use Cwd;
+
+use constant PI => 3.14159265358979;
+use constant TileSize => 256;		# same for Google and Yandex
+
+use constant RADIUS_E => 6378137;	# radius of Earth at equator
+use constant EQUATOR => 40075016.68557849; # equator length
+use constant E => 0.0818191908426;	# eccentricity of Earth's ellipsoid
+
+use constant UA => 'Mozilla/5.0 (X11; FreeBSD amd64; rv:5.0) Gecko/20100101 Firefox/5.0';
+
+my %Services = (
+
+    google => {
+	UrlGen	=> \&GoogleUrlGen,
+	Tmpl	=> 'http://khm1.google.com/kh/v=102&x=%u&y=%u&z=%u&s=%s',
+	Proj	=> \&GoogleProj,
+	Readdr	=> \&NoReaddr,
+	Zoom	=> 17,
+	rw	=> 1,
+    },
+
+    bing => {
+	UrlGen	=> \&BingUrlGen,
+	Tmpl	=> 'http://a0.ortho.tiles.virtualearth.net/tiles/a%s.jpeg?g=72',
+	ResChk	=> \&BingResChk,
+	Proj	=> \&GoogleProj,
+	Readdr	=> \&NoReaddr,
+	Zoom	=> 18,
+	rw	=> 1,
+    },
+
+    yandex => {
+	UrlGen	=> \&GenericUrlGen,
+	Tmpl	=> 'http://sat02.maps.yandex.net/tiles?l=sat&v=3.177.0&x=%u&y=%u&z=%u&lang=ru_RU',
+	Proj	=> \&YandexProj,
+	Readdr	=> \&NoReaddr,
+	Zoom	=> 17,
+	rw	=> 1,
+    },
+
+    irs => {
+	UrlGen	=> \&GenericUrlGen,
+	Tmpl => 'http://maps.kosmosnimki.ru/TileSender.ashx?ModeKey=tile&MapName=F7B8CF651682420FA1749D894C8AD0F6&LayerName=BAC78D764F0443BD9AF93E7A998C9F5B&apikey=4018C5A9AECAD8868ED5DEB2E41D09F7&x=%d&y=%d&z=%d',
+	Proj	=> \&YandexProj,
+	Readdr	=> \&KosmoReaddr,
+	FetchHandler => \&KosmoFetchHandler,
+	FetchRetries => 2,
+	Zoom	=> 14,
+	rw	=> 1,
+    },
+
+);
+
+our $Service = undef;
+our $CacheDir = undef;
+our $UA = LWP::UserAgent->new;
+
+# tile maths
+
+sub NumTiles($) {
+	my $z = shift;
+
+	return 2 ** $z;
+}
+
+sub WorldSize($) {
+	my $z = shift;
+
+	return NumTiles($z) * TileSize;
+}
+
+sub PixelsPerLonDegree($) {
+	my $z = shift;
+
+	return WorldSize($z) / 360;
+}
+
+sub PixelsPerLonRadian($) {
+	my $z = shift;
+
+	return WorldSize($z) / (2 * PI);
+}
+
+sub Deg2Rad($) {
+	my $d = shift;
+
+	return ($d * PI / 180);
+}
+
+sub TileNum($) {
+	my $x = shift;
+
+	return int($x / TileSize);
+}
+
+# URL generators
+sub GenericUrlGen($$$$) {
+	my ($Service, $x, $y, $z) = @_;
+
+	return sprintf($Service->{Tmpl}, $x, $y, $z);
+}
+
+# Google URL generator
+sub GoogleUrlGen($$$$) {
+	my ($Service, $x, $y, $z) = @_;
+	my $s = substr('Galileo', 0, ($x*3+$y)%8);
+
+	return sprintf($Service->{Tmpl}, $x, $y, $z, $s);
+}
+
+sub BingUrlGen($$$$) {
+	my ($Service, $x, $y, $z) = @_;
+	my ($osX, $osY, $prX, $prY);
+	my $s = "";
+
+	$z++;
+	$prX = $prY = $osX = $osY = 2 ** ($z-2);
+
+	for (my $i = 1; $i < $z; $i++) {
+		$prX /= 2;
+		$prY /= 2;
+		if ($x < $osX) {
+			$osX -= $prX;
+			if ($y < $osY) {
+				$osY -= $prY;
+				$s .= '0';
+			} else {
+				$osY += $prY;
+				$s .= '2';
+			}
+		} else {
+			$osX += $prX;
+			if ($y < $osY) {
+				$osY -= $prY;
+				$s .= '1';
+			} else {
+				$osY += $prY;
+				$s .= '3';
+			}
+		}
+	}
+
+	return sprintf($Service->{Tmpl}, $s);
+}
+
+sub BingResChk($) {
+	my $res = shift;
+
+	return (0) if (length($res->content) == 1033 &&
+	    $res->header('Content-type') eq "image/png");
+
+	return (1);	
+}
+
+# Google projector
+sub GoogleProj($$$) {
+	my ($lon, $lat, $z) = @_;
+	my ($x, $y, $t);
+
+	$x = int(WorldSize($z)/2 + $lon * PixelsPerLonDegree($z));
+	$t = sin(Deg2Rad($lat));
+	$y = int(WorldSize($z)/2 -
+	    log((1 + $t)/(1 - $t)) * PixelsPerLonRadian($z) / 2);
+
+	return ($x, $y);
+}
+
+# Yandex projector
+sub YandexProj($$$) {
+	my ($lon, $lat, $z) = @_;
+	my ($x, $y, $tmp, $pow);
+
+	# convert coords to radians and zoom level to zoom factor
+	$lon = Deg2Rad($lon);
+	$lat = Deg2Rad($lat);
+	$z = WorldSize($z)/EQUATOR;
+
+	$x = int((RADIUS_E * $lon + EQUATOR/2) * $z);
+	$tmp = tan(PI/4 + $lat/2);
+	$pow = pow(tan(PI/4 + asin(E * sin($lat))/2), E);
+	$y = int((EQUATOR/2 - (RADIUS_E * log($tmp/$pow))) * $z);
+
+	return ($x, $y);
+}
+
+# Kosmosnimki tile readdressing
+sub KosmoReaddr($$$) {
+	my ($x, $y, $z) = @_;
+	my $tmp = NumTiles($z)/2;
+
+	$x = $x - $tmp;
+	$y = $tmp - $y - 1;
+
+	return ($x, $y);
+}
+
+sub NoReaddr($$$) {
+	my ($x, $y, undef) = @_;
+
+	return ($x, $y);
+}
+
+# Kosmosnimki session crutch
+sub KosmoFetchHandler($) {
+	my $res = shift;
+
+	if (length($res->content) == 0 && $res->code == 200) {
+		my $url = "http://maps.kosmosnimki.ru/TileSender.ashx?ModeKey=map&MapName=F7B8CF651682420FA1749D894C8AD0F6";
+		my $req = HTTP::Request->new(GET => $url);
+		$UA->request($req);
+		warn("Kosmosnimki crutch executed\n");
+	}
+}
+
+###############################################################################
+# Public below
+###############################################################################
+
+sub ProjInit($) {
+	my $service = shift;
+
+	$service = lc($service);
+
+	$Service = $Services{$service};
+
+	die("Unknown service\n") if not defined $Service;
+}
+
+sub MapsInit($$) {
+	my ($service, $cachedir) = @_;
+
+	ProjInit($service);
+
+	$UA->agent(UA);
+
+	if (-d $cachedir) {
+		$CacheDir = $cachedir;
+		if (! -w $cachedir) {
+			$Service->{rw} = 0;
+		}
+	}
+};
+
+sub LatLon2Tile($$) {
+	my ($lat, $lon) = @_;
+
+	my ($x, $y) = $Service->{Proj}($lon, $lat, $Service->{Zoom});
+	($x, $y) = (TileNum($x), TileNum($y));
+	($x, $y) = $Service->{Readdr}($x,$y,$Service->{Zoom});
+
+	return $Service->{UrlGen}($Service, $x, $y, $Service->{Zoom});
+}
+
+sub BBoxFetch($$$$) {
+	my ($minx, $miny, $maxx, $maxy) = @_;
+	my $z = $Service->{Zoom};
+	my ($bminx, $bminy, $bmaxx, $bmaxy);
+	my ($x, $y, $ix, $iy);
+	my ($fetched, $errors, $washere);
+
+	if ($Service->{rw} != 1) {
+		return "Service is R/O";
+	}
+
+	($minx, $miny) = $Service->{Proj}($minx, $miny, $z);
+	($maxx, $maxy) = $Service->{Proj}($maxx, $maxy, $z);
+
+	# Perform a swap of corners, to make LonLat
+	# bounding boxes work in positive srs.
+	($minx, $maxx) = ($maxx, $minx) if ($minx > $maxx);
+	($miny, $maxy) = ($maxy, $miny) if ($miny > $maxy);
+
+	($bminx, $bminy, $bmaxx, $bmaxy) = (TileNum($minx), TileNum($miny),
+	    TileNum($maxx), TileNum($maxy));
+
+	for ($y = $bminy, $iy = 0; $y <= $bmaxy; $y++, $iy++) {
+	    for ($x = $bminx, $ix = 0; $x <= $bmaxx; $x++, $ix++) {
+		my ($url, $req, $res, $retries);
+		my ($ux, $uy);
+
+		($ux, $uy) = $Service->{Readdr}($x,$y,$z);
+
+		if (-r "$CacheDir/$z/$ux/$uy") {
+			$washere++;
+			next;
+		}
+
+		$url = $Service->{UrlGen}($Service, $ux, $uy, $z);
+		$req = HTTP::Request->new(GET => $url);
+
+		$retries = (defined $Service->{FetchRetries} ?
+		    $Service->{FetchRetries} : 1);
+		while ($retries-- > 0) {
+			$res = $UA->request($req);
+			last if ($res->is_success &&
+			    length($res->content) > 0);
+			$Service->{FetchHandler}($res)
+				if defined($Service->{FetchHandler});
+		}
+		if ($res->is_success && length($res->content) > 0) {
+			my $f;
+
+			make_path("$CacheDir/$z/$ux");
+			sysopen($f, "$CacheDir/$z/$ux/$uy",
+			    O_WRONLY|O_CREAT|O_TRUNC)
+				or warn("sysopen: $!");
+			syswrite($f, $res->content)
+				or warn("syswrite: $!");
+			close($f);
+			$fetched++;
+		} else {
+			warn($url, " ", length($res->content),
+			    " bytes ", $res->status_line, "\n");
+			$errors++;
+		}
+	    }
+	}
+
+	return sprintf("Fetched %u, errors %u, was here %u\n",
+	    $fetched, $errors, $washere);
+}
+
+sub BBoxCopy($$$$$) {
+	my ($Dest, $minx, $miny, $maxx, $maxy) = @_;
+	my $z = $Service->{Zoom};
+	my ($bminx, $bminy, $bmaxx, $bmaxy);
+	my ($x, $y, $ix, $iy);
+	my ($missing, $copied, $errors);
+
+	if (! -w $Dest) {
+		return "can\'t write to $Dest\n";
+	}
+
+	($minx, $miny) = $Service->{Proj}($minx, $miny, $z);
+	($maxx, $maxy) = $Service->{Proj}($maxx, $maxy, $z);
+
+	# Perform a swap of corners, to make LonLat
+	# bounding boxes work in positive srs.
+	($minx, $maxx) = ($maxx, $minx) if ($minx > $maxx);
+	($miny, $maxy) = ($maxy, $miny) if ($miny > $maxy);
+
+	($bminx, $bminy, $bmaxx, $bmaxy) = (TileNum($minx), TileNum($miny),
+	    TileNum($maxx), TileNum($maxy));
+
+	for ($y = $bminy, $iy = 0; $y <= $bmaxy; $y++, $iy++) {
+	    for ($x = $bminx, $ix = 0; $x <= $bmaxx; $x++, $ix++) {
+		my ($ux, $uy);
+
+		($ux, $uy) = $Service->{Readdr}($x,$y,$z);
+
+		if (! -r "$CacheDir/$z/$ux/$uy") {
+			$missing++;
+			next;
+		}
+
+		make_path("$Dest/$z/$ux");
+		if (system("/bin/cp", "$CacheDir/$z/$ux/$uy",
+		    "$Dest/$z/$ux") != 0) {
+			$errors++;
+		} else {
+			$copied++;
+		}
+	    }
+	}
+
+	return sprintf("Copied %u, missing %u, errors %u\n",
+	    $copied, $missing, $errors);
+}
+1;
