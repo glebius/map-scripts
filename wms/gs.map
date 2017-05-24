@@ -3,14 +3,14 @@ MAP
 #  CONFIG "CPL_DEBUG" "ON"
   STATUS ON
   UNITS DD
-  SHAPEPATH "/home/glebius/wms"
+  SHAPEPATH "/maps/GS/wms/"
 
   PROJECTION
     "init=epsg:4326"
   END
 
 WEB
-    IMAGEPATH "/home/glebius/wms/"
+    IMAGEPATH "/maps/GS/wms/"
     IMAGEURL "/wms/"
     METADATA
 	"wms_title"     "glebius's maps"
@@ -23,7 +23,6 @@ LAYER
     NAME "gs"
     TYPE RASTER
     STATUS ON
-    OPACITY ALPHA
     TILEINDEX "vrt-index.shp"
     TILEITEM "Location"
     PROJECTION
@@ -31,7 +30,7 @@ LAYER
     END
     METADATA
 	"wms_title" "Soviet Military Mosaic"
-	"wms_srs" "EPSG:4326"
+	"wms_srs" "EPSG:4326 EPSG:3857"
     END
 END
 
