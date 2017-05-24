@@ -20,12 +20,17 @@ VRTS=		o37-100k-ValentinAK.vrt \
 		k38-100k.vrt \
 		k43-100k.vrt \
 		k44-100k.vrt \
+		k47-100k-sparse.vrt \
+		k48-100k-sparse.vrt \
 		l35-100k.vrt \
 		l36-100k.vrt \
 		l37-100k.vrt \
 		l38-100k.vrt \
 		l39-100k.vrt \
 		l40-100k.vrt \
+		l46-100k.vrt \
+		l47-100k.vrt \
+		l48-100k.vrt \
 		l53-100k.vrt \
 		l54-100k.vrt \
 		m34-100k.vrt \
@@ -108,7 +113,7 @@ VRTS=		o37-100k-ValentinAK.vrt \
 
 .MAIN		: index
 
-.SUFFIXES	: .ecw .vrt
+.SUFFIXES	: .ecw .tiff .vrt
 
 .ecw.vrt	:
 	@echo Building $(.TARGET)
@@ -142,6 +147,39 @@ VRTS=		o37-100k-ValentinAK.vrt \
 		"+init=epsg:4326" -te $${LB} $${RT} $(.PREFIX).ecw $(.TARGET); \
 	$(GDALWARP) -of vrt -dstalpha -s_srs "$${PROJ} $(TOWGS)" -t_srs	\
 		"+init=epsg:4326" -te $${LB} $${RT} $(.PREFIX).ecw $(.TARGET)
+
+.tiff.vrt	:
+	@echo Building $(.TARGET)
+	@PROJ=$$($(GREP) $(.TARGET) $(PROJHINTS) | $(SED) s/^$(.TARGET)\ *//); \
+	if [ -z "$${PROJ}" ]; then					\
+		PROJ=$$(CPL_DEBUG=ON $(GDALINFO) $(.PREFIX).tiff 2>&1 |	\
+		    $(SED) -En s/^OGRCT:\ Source:\ //p);		\
+	fi;								\
+	if [ -z "$${PROJ}" ]; then					\
+		echo no proj for $(.TARGET);				\
+		exit 1;							\
+	fi;								\
+	if (echo $(.TARGET) | $(GREP) -c _ >/dev/null); then		\
+		ZONE1=$$(echo $(.TARGET) |				\
+		    $(SED) "s/^([a-z][0-9]+)_.*$$/\1/");		\
+		ZONE2=$$(echo $(.TARGET) |				\
+		    $(SED) "s/^([a-z])[0-9]+_([0-9]+).*/\1\2/");	\
+		LB=$$(echo $${ZONE1} | $(NOMCALC) | cut -f 1,2 -d ' ' |	\
+		    $(CS2CS) | cut -b 1-27);				\
+		RT=$$(echo $${ZONE2} | $(NOMCALC) | cut -f 3,4 -d ' ' |	\
+		    $(CS2CS) | cut -b 1-27);				\
+	else								\
+		ZONE=$$(echo $(.TARGET) |				\
+		    $(SED) "s/^([a-z][0-9]+).*$$/\1/");			\
+		LB=$$(echo $${ZONE} | $(NOMCALC) | cut -f 1,2 -d ' ' |	\
+		    $(CS2CS) | cut -b 1-27);				\
+		RT=$$(echo $${ZONE} | $(NOMCALC) | cut -f 3,4 -d ' ' |	\
+		    $(CS2CS) | cut -b 1-27);				\
+	fi;								\
+	echo $(GDALWARP) -of vrt -dstalpha -s_srs "$${PROJ} $(TOWGS)" -t_srs	\
+		"+init=epsg:4326" -te $${LB} $${RT} $(.PREFIX).tiff $(.TARGET); \
+	$(GDALWARP) -of vrt -dstalpha -s_srs "$${PROJ} $(TOWGS)" -t_srs	\
+		"+init=epsg:4326" -te $${LB} $${RT} $(.PREFIX).tiff $(.TARGET)
 
 $(INDEX).shp	: $(VRTS)
 		$(GDALTINDEX) $(INDEX).shp $(VRTS)
