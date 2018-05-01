@@ -1,5 +1,7 @@
 #!/usr/local/bin/perl -w
 
+# See http://gpsmapsearch.com/osm/nom.htm
+
 use strict;
 use POSIX;
 
