@@ -90,7 +90,7 @@ sub
 process_response($$) {
 	my ($res, $id) = @_;
 	my $req = $res->request;
-	my ($z, $x, $y, $ux, $uy) = (@{$URLHash{$id}})[0,1,2,3,4];
+	my ($z, $x, $y) = (@{$URLHash{$id}})[0,1,2];
 
 	if ($res->is_success && length($res->content) > 0) {
 		if (defined($WebMaps::Service->{ResChk}) &&
@@ -102,8 +102,8 @@ process_response($$) {
 
 		my $f;
 
-		make_path("$cachedir/$z/$ux");
-		sysopen($f, "$cachedir/$z/$ux/$uy",
+		make_path("$cachedir/$z/$x");
+		sysopen($f, "$cachedir/$z/$x/$y",
 		    O_WRONLY|O_CREAT|O_TRUNC)
 			or warn("sysopen: $!");
 		syswrite($f, $res->content)
@@ -119,15 +119,15 @@ process_response($$) {
 			warn($req->url, " ", length($res->content),
 			    " bytes ", $res->status_line, "\n");
 		} elsif ($res->code == 504) {
-			$id = $async->add(getreq($ux, $uy, $z));
-			$URLHash{$id} = [$z, $x, $y, $ux, $uy];
+			$id = $async->add(getreq($x, $y, $z));
+			$URLHash{$id} = [$z, $x, $y];
 			$retries++;
 		} elsif ($res->code == 503) {
 			printf("%u/%u/%u (%s): %u - retrying\n",
 			    $z, $x, $y, $req->url, $res->code);
 			sleep(3600) if ($req->url =~ /www.google.com\/sorry/);
-			$id = $async->add(getreq($ux, $uy, $z));
-			$URLHash{$id} = [$z, $x, $y, $ux, $uy];
+			$id = $async->add(getreq($x, $y, $z));
+			$URLHash{$id} = [$z, $x, $y];
 			$retries++;
 		} else {
 			warn($req->url, " ", length($res->content),
@@ -188,7 +188,6 @@ for (my $z = $minzoom; $z <= $maxzoom; $z++) {
 
 TILEX:	for (my $x = $bminx; $x <= $bmaxx; $x++) {
 TILEY:	    for (my $y = $bminy; $y <= $bmaxy; $y++) {
-		my ($ux, $uy);
 		my $id;
 
 		info() if ($sigflag == 1);
@@ -235,9 +234,7 @@ TILEY:	    for (my $y = $bminy; $y <= $bmaxy; $y++) {
 		next TILEY;
 
 INPOLY:
-		($ux, $uy) = $WebMaps::Service->{Readdr}($x,$y,$z);
-
-		if (-r "$cachedir/$z/$ux/$uy") {
+		if (-r "$cachedir/$z/$x/$y") {
 			$washere++;
 			next TILEY;
 		} elsif (defined($zdone)) {
@@ -254,8 +251,8 @@ INPOLY:
 			}
 		}
 
-		$id = $async->add(getreq($ux, $uy, $z));
-		$URLHash{$id} = [$z, $x, $y, $ux, $uy];
+		$id = $async->add(getreq($x, $y, $z));
+		$URLHash{$id} = [$z, $x, $y];
 
 		while($async->to_return_count > MAXQUEUE) {
 			my ($res, $id) = $async->next_response;

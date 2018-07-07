@@ -31,7 +31,6 @@ my %Services = (
 	UrlGen	=> \&GoogleUrlGen,
 	Tmpl	=> 'http://khm1.google.com/kh/v=102&x=%u&y=%u&z=%u&s=%s',
 	Proj	=> \&GoogleProj,
-	Readdr	=> \&NoReaddr,
 	Zoom	=> 17,
 	rw	=> 1,
     },
@@ -41,7 +40,6 @@ my %Services = (
 	Tmpl	=> 'http://a0.ortho.tiles.virtualearth.net/tiles/a%s.jpeg?g=72',
 	ResChk	=> \&BingResChk,
 	Proj	=> \&GoogleProj,
-	Readdr	=> \&NoReaddr,
 	Zoom	=> 18,
 	rw	=> 1,
     },
@@ -50,18 +48,14 @@ my %Services = (
 	UrlGen	=> \&GenericUrlGen,
 	Tmpl	=> 'http://sat02.maps.yandex.net/tiles?l=sat&v=3.177.0&x=%u&y=%u&z=%u&lang=ru_RU',
 	Proj	=> \&YandexProj,
-	Readdr	=> \&NoReaddr,
 	Zoom	=> 17,
 	rw	=> 1,
     },
 
     irs => {
 	UrlGen	=> \&GenericUrlGen,
-	Tmpl => 'http://maps.kosmosnimki.ru/TileSender.ashx?ModeKey=tile&MapName=F7B8CF651682420FA1749D894C8AD0F6&LayerName=BAC78D764F0443BD9AF93E7A998C9F5B&apikey=4018C5A9AECAD8868ED5DEB2E41D09F7&x=%d&y=%d&z=%d',
-	Proj	=> \&YandexProj,
-	Readdr	=> \&KosmoReaddr,
-	FetchHandler => \&KosmoFetchHandler,
-	FetchRetries => 2,
+	Tmpl => 'http://maps.kosmosnimki.ru/TileService.ashx?Request=gettile&layerName=19195FD12B6F473684BF0EF115652C38&apikey=4018C5A9AECAD8868ED5DEB2E41D09F7&crs=epsg:3857&x=%d&y=%d&z=%d',
+	Proj	=> \&GoogleProj,
 	Zoom	=> 14,
 	rw	=> 1,
     },
@@ -200,35 +194,6 @@ sub YandexProj($$$) {
 	return ($x, $y);
 }
 
-# Kosmosnimki tile readdressing
-sub KosmoReaddr($$$) {
-	my ($x, $y, $z) = @_;
-	my $tmp = NumTiles($z)/2;
-
-	$x = $x - $tmp;
-	$y = $tmp - $y - 1;
-
-	return ($x, $y);
-}
-
-sub NoReaddr($$$) {
-	my ($x, $y, undef) = @_;
-
-	return ($x, $y);
-}
-
-# Kosmosnimki session crutch
-sub KosmoFetchHandler($) {
-	my $res = shift;
-
-	if (length($res->content) == 0 && $res->code == 200) {
-		my $url = "http://maps.kosmosnimki.ru/TileSender.ashx?ModeKey=map&MapName=F7B8CF651682420FA1749D894C8AD0F6";
-		my $req = HTTP::Request->new(GET => $url);
-		$UA->request($req);
-		warn("Kosmosnimki crutch executed\n");
-	}
-}
-
 ###############################################################################
 # Public below
 ###############################################################################
@@ -263,7 +228,6 @@ sub LatLon2Tile($$) {
 
 	my ($x, $y) = $Service->{Proj}($lon, $lat, $Service->{Zoom});
 	($x, $y) = (TileNum($x), TileNum($y));
-	($x, $y) = $Service->{Readdr}($x,$y,$Service->{Zoom});
 
 	return $Service->{UrlGen}($Service, $x, $y, $Service->{Zoom});
 }
@@ -305,15 +269,6 @@ sub BBoxFetch($$$$) {
 		$url = $Service->{UrlGen}($Service, $ux, $uy, $z);
 		$req = HTTP::Request->new(GET => $url);
 
-		$retries = (defined $Service->{FetchRetries} ?
-		    $Service->{FetchRetries} : 1);
-		while ($retries-- > 0) {
-			$res = $UA->request($req);
-			last if ($res->is_success &&
-			    length($res->content) > 0);
-			$Service->{FetchHandler}($res)
-				if defined($Service->{FetchHandler});
-		}
 		if ($res->is_success && length($res->content) > 0) {
 			my $f;
 
