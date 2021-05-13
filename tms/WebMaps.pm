@@ -6,11 +6,10 @@ our (@ISA, @EXPORT_OK, %EXPORT_TAGS);
 BEGIN {
 	require Exporter;
 	@ISA = qw/Exporter/;
-	@EXPORT_OK = qw/ProjInit TileNum TileSize LatLon2Tile/;
+	@EXPORT_OK = qw/ProjInit TileNum TileSize LatLon2Tile UA/;
 	%EXPORT_TAGS = (standard => [@EXPORT_OK]);
 }
 
-use LWP;
 use POSIX qw/pow tan asin/;
 use File::Path qw/make_path/;
 use Fcntl qw/:DEFAULT/;
@@ -23,7 +22,7 @@ use constant RADIUS_E => 6378137;	# radius of Earth at equator
 use constant EQUATOR => 40075016.68557849; # equator length
 use constant E => 0.0818191908426;	# eccentricity of Earth's ellipsoid
 
-use constant UA => 'Mozilla/5.0 (X11; FreeBSD amd64; rv:5.0) Gecko/20100101 Firefox/5.0';
+use constant UA => 'JOSM/1.5 (17702 ru) FreeBSD Java/1.8.0_282';
 
 my %Services = (
 
@@ -60,7 +59,6 @@ my %Services = (
 
 our $Service = undef;
 our $CacheDir = undef;
-our $UA = LWP::UserAgent->new;
 
 # tile maths
 
