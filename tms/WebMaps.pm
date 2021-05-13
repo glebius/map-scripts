@@ -28,29 +28,26 @@ my %Services = (
 
     google => {
 	UrlGen	=> \&GoogleUrlGen,
-	Tmpl	=> 'http://khm1.google.com/kh/v=102&x=%u&y=%u&z=%u&s=%s',
 	Proj	=> \&GoogleProj,
 	Zoom	=> 17,
     },
 
     bing => {
 	UrlGen	=> \&BingUrlGen,
-	Tmpl	=> 'http://a0.ortho.tiles.virtualearth.net/tiles/a%s.jpeg?g=72',
-	ResChk	=> \&BingResChk,
 	Proj	=> \&GoogleProj,
+	RRList	=> [ 't0', 't1', 't2', 't3'],
+	RRi	=> 0,
 	Zoom	=> 18,
     },
 
     yandex => {
-	UrlGen	=> \&GenericUrlGen,
-	Tmpl	=> 'http://sat02.maps.yandex.net/tiles?l=sat&v=3.177.0&x=%u&y=%u&z=%u&lang=ru_RU',
+	UrlGen	=> \&YandexUrlGen,
 	Proj	=> \&YandexProj,
 	Zoom	=> 17,
     },
 
     irs => {
-	UrlGen	=> \&GenericUrlGen,
-	Tmpl => 'http://maps.kosmosnimki.ru/TileService.ashx?Request=gettile&layerName=19195FD12B6F473684BF0EF115652C38&apikey=4018C5A9AECAD8868ED5DEB2E41D09F7&crs=epsg:3857&x=%d&y=%d&z=%d',
+	UrlGen	=> \&KosmoUrlGen,
 	Proj	=> \&GoogleProj,
 	Zoom	=> 14,
     },
@@ -99,22 +96,28 @@ sub TileNum($) {
 }
 
 # URL generators
-sub GenericUrlGen($$$$) {
-	my ($Service, $x, $y, $z) = @_;
+sub
+YandexUrlGen($$$)
+{
+	my ($x, $y, $z) = @_;
 
-	return sprintf($Service->{Tmpl}, $x, $y, $z);
+	return sprintf('http://sat02.maps.yandex.net/tiles?l=sat&v=3.177.0&x=%u&y=%u&z=%u&lang=ru_RU', $x, $y, $z);
 }
 
-# Google URL generator
-sub GoogleUrlGen($$$$) {
-	my ($Service, $x, $y, $z) = @_;
+sub
+GoogleUrlGen($$$)
+{
+	my ($x, $y, $z) = @_;
 	my $s = substr('Galileo', 0, ($x*3+$y)%8);
 
-	return sprintf($Service->{Tmpl}, $x, $y, $z, $s);
+	return sprintf('http://khm1.google.com/kh/v=102&x=%u&y=%u&z=%u&s=%s',
+	    $x, $y, $z, $s);
 }
 
-sub BingUrlGen($$$$) {
-	my ($Service, $x, $y, $z) = @_;
+sub
+BingUrlGen($$$)
+{
+	my ($x, $y, $z) = @_;
 	my ($osX, $osY, $prX, $prY);
 	my $s = "";
 
@@ -145,16 +148,24 @@ sub BingUrlGen($$$$) {
 		}
 	}
 
-	return sprintf($Service->{Tmpl}, $s);
+	if (++$Service->{RRi} > $#{$Service->{RRList}}) {
+		$Service->{RRi} = 0;
+	}
+
+	return sprintf(
+	    'http://ecn.%s.tiles.virtualearth.net/tiles/a%s.jpeg?g=6438',
+	    $Service->{RRList}->[$Service->{RRi}], $s);
 }
 
-sub BingResChk($) {
-	my $res = shift;
+sub
+KosmoUrlGen($$$)
+{
+	my ($x, $y, $z) = @_;
 
-	return (0) if (length($res->content) == 1033 &&
-	    $res->header('Content-type') eq "image/png");
+	return sprintf('http://maps.kosmosnimki.ru/TileService.ashx?Request=gettile&layerName=19195FD12B6F473684BF0EF115652C38&apikey=4018C5A9AECAD8868ED5DEB2E41D09F7&crs=epsg:3857&x=%d&y=%d&z=%d',
+	    $x, $y, $z);
+}
 
-	return (1);	
 }
 
 # Google projector
