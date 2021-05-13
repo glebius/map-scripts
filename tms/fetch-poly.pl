@@ -1,21 +1,19 @@
 #!/usr/local/bin/perl -w
 
+BEGIN {
+	push @INC, '.';
+}
 use strict;
 
+use WWW::Curl::Easy;
+use WWW::Curl::Multi;
 use Math::Polygon;
 use Fcntl qw/:DEFAULT/;
 use File::Path qw/make_path/;
 
-use HTTP::Async;
-use HTTP::Request;
-
 use WebMaps qw/:standard/;
 
-use constant	MAXWORK		=> 16;
 use constant	MAXQUEUE	=> 100;
-use constant	SLOWDOWN_LIM	=> 30;
-use constant	TIMEOUT		=> 20;
-use constant	UA => 'User-Agent', 'Mozilla/5.0 (X11; FreeBSD amd64; rv:18.0) Gecko/20100101 Firefox/18.0';
 
 my @poly;
 my @NoData;
@@ -56,10 +54,10 @@ die("Can't write to $cachedir\n")
 
 ## START
 
-my $async = HTTP::Async->new( slots => MAXWORK, timeout => TIMEOUT );
+my $multi = WWW::Curl::Multi->new;
+my %easy;
 my ($fetched, $errors, $washere, $outofpoly, $nodata, $todo, $retries, $start);
 my $sigflag = 0;
-my $sndqoverflows = 0;
 
 sub
 info() {
@@ -74,7 +72,6 @@ info() {
 	    $done, $todo, $done/$todo * 100,
 	    $fetched, $errors, $retries, $nodata, $washere, $outofpoly,
 	    $fetched / $time, $done / $time);
-	print($async->info);
 
 	$sigflag = 0;
 }
@@ -84,78 +81,62 @@ siginfo() { $sigflag = 1 }
 
 $SIG{'INFO'} = \&siginfo;
 
-my %URLHash;
-
 sub
-process_response($$) {
-	my ($res, $id) = @_;
-	my $req = $res->request;
-	my ($z, $x, $y) = (@{$URLHash{$id}})[0,1,2];
+process_data($$) {
+	my $data = shift;
+	my ($z, $x, $y) = unpack('L3', shift);
+	my $f;
 
-	if ($res->is_success && length($res->content) > 0) {
-		if (defined($WebMaps::Service->{ResChk}) &&
-		    $WebMaps::Service->{ResChk}($res) != 1) {
-			$nodata++;
-			$NoData[$z][$x][$y] = 1
-				if ($z < $maxzoom);
-		}
+	make_path("$cachedir/$z/$x");
+	sysopen($f, "$cachedir/$z/$x/$y", O_WRONLY|O_CREAT|O_APPEND)
+		or warn("sysopen: $!");
+	syswrite($f, $data)
+		or warn("syswrite: $!");
+	close($f);
 
-		my $f;
-
-		make_path("$cachedir/$z/$x");
-		sysopen($f, "$cachedir/$z/$x/$y",
-		    O_WRONLY|O_CREAT|O_TRUNC)
-			or warn("sysopen: $!");
-		syswrite($f, $res->content)
-			or warn("syswrite: $!");
-		close($f);
-		$fetched++;
-		$URLHash{$id} = undef;
-	} else {
-		if ($res->code == 404) {
-			$nodata++;
-			$NoData[$z][$x][$y] = 1
-				if ($z < $maxzoom);
-			warn($req->url, " ", length($res->content),
-			    " bytes ", $res->status_line, "\n");
-		} elsif ($res->code == 504) {
-			$id = $async->add(getreq($x, $y, $z));
-			$URLHash{$id} = [$z, $x, $y];
-			$retries++;
-		} elsif ($res->code == 503) {
-			printf("%u/%u/%u (%s): %u - retrying\n",
-			    $z, $x, $y, $req->url, $res->code);
-			sleep(3600) if ($req->url =~ /www.google.com\/sorry/);
-			$id = $async->add(getreq($x, $y, $z));
-			$URLHash{$id} = [$z, $x, $y];
-			$retries++;
-		} else {
-			warn($req->url, " ", length($res->content),
-			    " bytes ", $res->status_line, "\n");
-			$errors++;
-		}
-	}
+	return (length($data));
 }
 
 sub
-getreq($$$) {
-	my ($x, $y, $z) = @_;
-	my ($url, $req);
-
-	$url = $WebMaps::Service->{UrlGen}($WebMaps::Service, $x, $y, $z);
-	$req = HTTP::Request->new(GET => $url);
-	$req->header(UA);
-
-	return ($req);
-}
-
-sub
-drain_queue()
+process_rv()
 {
-	while (my ($res, $id) = $async->wait_for_next_response) {
-		process_response($res, $id);
-		info() if ($sigflag == 1);
+
+	while (my ($id, $rv) = $multi->info_read) {
+		next unless $id;
+		if ($rv != 0) {
+			my ($z, $x, $y) = ($id =~ /(\d+):(\d+):(\d+)/);
+			my $xfer = $easy{$id};
+
+			printf("Error fetching %u/%u/%u: %u %s %s\n",
+			    $z, $x, $y, $rv, $xfer->strerror($rv),
+			    $xfer->errbuf);
+			$errors++;
+		} else {
+			$fetched++;
+		}
+		delete $easy{$id};
 	}
+}
+
+sub
+fetch($$$)
+{
+	my ($z, $x, $y) = @_;
+	my $id = pack('L3', $z, $x, $y);
+#   CURLOPT_PRIVATE
+#       Despite what the libcurl manual says, in Perl land, only string values
+#       are suitable for this option.
+	my $sid = sprintf("%u:%u:%u", $z, $x, $y);
+
+	my $xfer = WWW::Curl::Easy->new;
+	my $url = $WebMaps::Service->{UrlGen}($x, $y, $z);
+	$xfer->setopt(CURLOPT_URL, $url);
+	$xfer->setopt(CURLOPT_PRIVATE, $sid);
+	$xfer->setopt(CURLOPT_USERAGENT, UA);
+	$xfer->setopt(CURLOPT_WRITEFUNCTION, \&process_data);
+	$xfer->setopt(CURLOPT_WRITEDATA, $id);
+	$easy{$sid} = $xfer;
+	$multi->add_handle($xfer);
 }
 
 for (my $z = $minzoom; $z <= $maxzoom; $z++) {
@@ -171,10 +152,7 @@ for (my $z = $minzoom; $z <= $maxzoom; $z++) {
 
 	my ($minx, $miny, $maxx, $maxy) = $Poly->bbox();
 
-	printf("Zoom %u: bbox %u,%u,%u,%u\n", $z, $minx, $miny, $maxx, $maxy);
-
-	my ($bminx, $bminy, $bmaxx, $bmaxy);
-	($bminx, $bminy, $bmaxx, $bmaxy) = (TileNum($minx), TileNum($miny),
+	my ($bminx, $bminy, $bmaxx, $bmaxy) = (TileNum($minx), TileNum($miny),
 	    TileNum($maxx), TileNum($maxy));
 
 	make_path("$cachedir/$z");
@@ -186,9 +164,11 @@ for (my $z = $minzoom; $z <= $maxzoom; $z++) {
 	$start = time();
 	$todo = ($bmaxy - $bminy + 1)*($bmaxx - $bminx + 1);
 
+	printf("Zoom %u: %u tiles to do, bbox %u,%u->%u,%u\n",
+	    $z, $todo, $bminx, $bminy, $bmaxx, $bmaxy);
+
 TILEX:	for (my $x = $bminx; $x <= $bmaxx; $x++) {
 TILEY:	    for (my $y = $bminy; $y <= $bmaxy; $y++) {
-		my $id;
 
 		info() if ($sigflag == 1);
 
@@ -251,26 +231,24 @@ INPOLY:
 			}
 		}
 
-		$id = $async->add(getreq($x, $y, $z));
-		$URLHash{$id} = [$z, $x, $y];
+		fetch($z, $x, $y);
 
-		while($async->to_return_count > MAXQUEUE) {
-			my ($res, $id) = $async->next_response;
-			process_response($res, $id);
-			info() if ($sigflag == 1);
-		}
-		while($async->to_send_count >= MAXQUEUE) {
-			drain_queue();
-			if ($sndqoverflows++ > SLOWDOWN_LIM) {
-				$sndqoverflows = 0;
-				printf("Sleeping...\n");
-				sleep(TIMEOUT);
+		while ((my $queue = $multi->perform) > MAXQUEUE) {
+			if ($queue != keys %easy) {
+				process_rv();
 			}
 		}
 	    }
 	}
 
-	drain_queue();
+	my $sleeping = 0;
+	while ($multi->perform != 0) {
+		sleep(1);
+		printf("Draining remaining requests:") if ($sleeping++ == 10);
+		printf(".") if ($sleeping > 10);
+	}
+	printf("\n") if ($sleeping >= 10);
+	process_rv();
 
 	if ($errors == 0) {
 		my $f;
