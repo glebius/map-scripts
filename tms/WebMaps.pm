@@ -28,15 +28,15 @@ my %Services = (
 
     google => {
 	UrlGen	=> \&GoogleUrlGen,
-	Proj	=> \&GoogleProj,
+	Proj	=> \&EPSG3857Proj,
 	Zoom	=> 17,
     },
 
     bing => {
 	UrlGen	=> \&BingUrlGen,
-	Proj	=> \&GoogleProj,
 	RRList	=> [ 't0', 't1', 't2', 't3'],
 	RRi	=> 0,
+	Proj	=> \&EPSG3857Proj,
 	Zoom	=> 18,
     },
 
@@ -48,7 +48,7 @@ my %Services = (
 
     irs => {
 	UrlGen	=> \&KosmoUrlGen,
-	Proj	=> \&GoogleProj,
+	Proj	=> \&EPSG3857Proj,
 	Zoom	=> 14,
     },
 
@@ -168,8 +168,7 @@ KosmoUrlGen($$$)
 
 }
 
-# Google projector
-sub GoogleProj($$$) {
+sub EPSG3857Proj($$$) {
 	my ($lon, $lat, $z) = @_;
 	my ($x, $y, $t);
 
