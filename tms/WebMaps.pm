@@ -6,7 +6,7 @@ our (@ISA, @EXPORT_OK, %EXPORT_TAGS);
 BEGIN {
 	require Exporter;
 	@ISA = qw/Exporter/;
-	@EXPORT_OK = qw/ProjInit MapsInit TileNum TileSize LatLon2Tile/;
+	@EXPORT_OK = qw/ProjInit TileNum TileSize LatLon2Tile/;
 	%EXPORT_TAGS = (standard => [@EXPORT_OK]);
 }
 
@@ -32,7 +32,6 @@ my %Services = (
 	Tmpl	=> 'http://khm1.google.com/kh/v=102&x=%u&y=%u&z=%u&s=%s',
 	Proj	=> \&GoogleProj,
 	Zoom	=> 17,
-	rw	=> 1,
     },
 
     bing => {
@@ -41,7 +40,6 @@ my %Services = (
 	ResChk	=> \&BingResChk,
 	Proj	=> \&GoogleProj,
 	Zoom	=> 18,
-	rw	=> 1,
     },
 
     yandex => {
@@ -49,7 +47,6 @@ my %Services = (
 	Tmpl	=> 'http://sat02.maps.yandex.net/tiles?l=sat&v=3.177.0&x=%u&y=%u&z=%u&lang=ru_RU',
 	Proj	=> \&YandexProj,
 	Zoom	=> 17,
-	rw	=> 1,
     },
 
     irs => {
@@ -57,7 +54,6 @@ my %Services = (
 	Tmpl => 'http://maps.kosmosnimki.ru/TileService.ashx?Request=gettile&layerName=19195FD12B6F473684BF0EF115652C38&apikey=4018C5A9AECAD8868ED5DEB2E41D09F7&crs=epsg:3857&x=%d&y=%d&z=%d',
 	Proj	=> \&GoogleProj,
 	Zoom	=> 14,
-	rw	=> 1,
     },
 
 );
@@ -208,20 +204,6 @@ sub ProjInit($) {
 	die("Unknown service\n") if not defined $Service;
 }
 
-sub MapsInit($$) {
-	my ($service, $cachedir) = @_;
-
-	ProjInit($service);
-
-	$UA->agent(UA);
-
-	if (-d $cachedir) {
-		$CacheDir = $cachedir;
-		if (! -w $cachedir) {
-			$Service->{rw} = 0;
-		}
-	}
-};
 
 sub LatLon2Tile($$) {
 	my ($lat, $lon) = @_;
