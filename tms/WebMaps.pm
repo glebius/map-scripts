@@ -6,7 +6,7 @@ our (@ISA, @EXPORT_OK, %EXPORT_TAGS);
 BEGIN {
 	require Exporter;
 	@ISA = qw/Exporter/;
-	@EXPORT_OK = qw/ProjInit MapsInit BBoxFetch BBoxCopy TileNum TileSize LatLon2Tile/;
+	@EXPORT_OK = qw/ProjInit MapsInit TileNum TileSize LatLon2Tile/;
 	%EXPORT_TAGS = (standard => [@EXPORT_OK]);
 }
 
@@ -232,110 +232,4 @@ sub LatLon2Tile($$) {
 	return $Service->{UrlGen}($Service, $x, $y, $Service->{Zoom});
 }
 
-sub BBoxFetch($$$$) {
-	my ($minx, $miny, $maxx, $maxy) = @_;
-	my $z = $Service->{Zoom};
-	my ($bminx, $bminy, $bmaxx, $bmaxy);
-	my ($x, $y, $ix, $iy);
-	my ($fetched, $errors, $washere);
-
-	if ($Service->{rw} != 1) {
-		return "Service is R/O";
-	}
-
-	($minx, $miny) = $Service->{Proj}($minx, $miny, $z);
-	($maxx, $maxy) = $Service->{Proj}($maxx, $maxy, $z);
-
-	# Perform a swap of corners, to make LonLat
-	# bounding boxes work in positive srs.
-	($minx, $maxx) = ($maxx, $minx) if ($minx > $maxx);
-	($miny, $maxy) = ($maxy, $miny) if ($miny > $maxy);
-
-	($bminx, $bminy, $bmaxx, $bmaxy) = (TileNum($minx), TileNum($miny),
-	    TileNum($maxx), TileNum($maxy));
-
-	for ($y = $bminy, $iy = 0; $y <= $bmaxy; $y++, $iy++) {
-	    for ($x = $bminx, $ix = 0; $x <= $bmaxx; $x++, $ix++) {
-		my ($url, $req, $res, $retries);
-		my ($ux, $uy);
-
-		($ux, $uy) = $Service->{Readdr}($x,$y,$z);
-
-		if (-r "$CacheDir/$z/$ux/$uy") {
-			$washere++;
-			next;
-		}
-
-		$url = $Service->{UrlGen}($Service, $ux, $uy, $z);
-		$req = HTTP::Request->new(GET => $url);
-
-		if ($res->is_success && length($res->content) > 0) {
-			my $f;
-
-			make_path("$CacheDir/$z/$ux");
-			sysopen($f, "$CacheDir/$z/$ux/$uy",
-			    O_WRONLY|O_CREAT|O_TRUNC)
-				or warn("sysopen: $!");
-			syswrite($f, $res->content)
-				or warn("syswrite: $!");
-			close($f);
-			$fetched++;
-		} else {
-			warn($url, " ", length($res->content),
-			    " bytes ", $res->status_line, "\n");
-			$errors++;
-		}
-	    }
-	}
-
-	return sprintf("Fetched %u, errors %u, was here %u\n",
-	    $fetched, $errors, $washere);
-}
-
-sub BBoxCopy($$$$$) {
-	my ($Dest, $minx, $miny, $maxx, $maxy) = @_;
-	my $z = $Service->{Zoom};
-	my ($bminx, $bminy, $bmaxx, $bmaxy);
-	my ($x, $y, $ix, $iy);
-	my ($missing, $copied, $errors);
-
-	if (! -w $Dest) {
-		return "can\'t write to $Dest\n";
-	}
-
-	($minx, $miny) = $Service->{Proj}($minx, $miny, $z);
-	($maxx, $maxy) = $Service->{Proj}($maxx, $maxy, $z);
-
-	# Perform a swap of corners, to make LonLat
-	# bounding boxes work in positive srs.
-	($minx, $maxx) = ($maxx, $minx) if ($minx > $maxx);
-	($miny, $maxy) = ($maxy, $miny) if ($miny > $maxy);
-
-	($bminx, $bminy, $bmaxx, $bmaxy) = (TileNum($minx), TileNum($miny),
-	    TileNum($maxx), TileNum($maxy));
-
-	for ($y = $bminy, $iy = 0; $y <= $bmaxy; $y++, $iy++) {
-	    for ($x = $bminx, $ix = 0; $x <= $bmaxx; $x++, $ix++) {
-		my ($ux, $uy);
-
-		($ux, $uy) = $Service->{Readdr}($x,$y,$z);
-
-		if (! -r "$CacheDir/$z/$ux/$uy") {
-			$missing++;
-			next;
-		}
-
-		make_path("$Dest/$z/$ux");
-		if (system("/bin/cp", "$CacheDir/$z/$ux/$uy",
-		    "$Dest/$z/$ux") != 0) {
-			$errors++;
-		} else {
-			$copied++;
-		}
-	    }
-	}
-
-	return sprintf("Copied %u, missing %u, errors %u\n",
-	    $copied, $missing, $errors);
-}
 1;
