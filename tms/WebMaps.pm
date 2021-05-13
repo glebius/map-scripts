@@ -10,6 +10,7 @@ BEGIN {
 	%EXPORT_TAGS = (standard => [@EXPORT_OK]);
 }
 
+use WWW::Curl::Easy;
 use POSIX qw/pow tan asin/;
 use File::Path qw/make_path/;
 use Fcntl qw/:DEFAULT/;
@@ -52,6 +53,12 @@ my %Services = (
 	Zoom	=> 14,
     },
 
+    maxar => {
+	Init	=> \&MaxarInit,
+	UrlGen	=> \&MaxarUrlGen,
+	Proj	=> \&EPSG3857Proj,
+	Zoom	=> 17,
+    },
 );
 
 our $Service = undef;
@@ -166,6 +173,37 @@ KosmoUrlGen($$$)
 	    $x, $y, $z);
 }
 
+sub
+MaxarInit()
+{
+	my $curl = WWW::Curl::Easy->new;
+
+	$Service->{apikey} = undef;
+	$curl->setopt(CURLOPT_URL,
+	    'https://josm.openstreetmap.de/mapkey/Maxar-Premium');
+	$curl->setopt(CURLOPT_USERAGENT, UA);
+	$curl->setopt(CURLOPT_WRITEDATA, \$Service->{apikey});
+
+	my $rv = $curl->perform;
+	if ($rv != 0) {
+		die("Maxar API key fetch failed: " . $curl->strerror($rv) .
+		    " " . $curl->errbuf . "\n");
+	}
+	if ($curl->getinfo(CURLINFO_HTTP_CODE) != 200) {
+		die("Maxar API key fetch http code " .
+		    $curl->getinfo(CURLINFO_HTTP_CODE));
+	}
+	chomp($Service->{apikey});
+}
+
+sub
+MaxarUrlGen($$$)
+{
+	my ($x, $y, $z) = @_;
+
+	$y = NumTiles($z) - 1 - $y;
+	return sprintf('https://services.digitalglobe.com/earthservice/tmsaccess/tms/1.0.0/DigitalGlobe:ImageryTileService@EPSG:3857@jpg/%u/%u/%u.jpg?connectId=%s&foo=premium',
+	    $z, $x, $y, $Service->{apikey});
 }
 
 sub EPSG3857Proj($$$) {
@@ -202,7 +240,8 @@ sub YandexProj($$$) {
 # Public below
 ###############################################################################
 
-sub ProjInit($) {
+sub
+ProjInit($) {
 	my $service = shift;
 
 	$service = lc($service);
@@ -210,8 +249,9 @@ sub ProjInit($) {
 	$Service = $Services{$service};
 
 	die("Unknown service\n") if not defined $Service;
-}
 
+	$Service->{Init}() if defined($Service->{Init});
+}
 
 sub LatLon2Tile($$) {
 	my ($lat, $lon) = @_;
